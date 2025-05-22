@@ -3,3 +3,8 @@ venv/
 .DS_Store
 instructlab-granite-7b-lab
 instructlab-granite-7b-lab-trained
+rhel-ai-nvidia-aws-1.5-1747399384-x86_64.raw
+*.pem
+containers.json
+role-policy.json
+trust-policy.json
