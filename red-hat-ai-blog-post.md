@@ -222,7 +222,7 @@ This starts an interactive session where you can evaluate how well your model ha
 
 Start with questions directly from your seed examples, then gradually introduce questions requiring synthesis across multiple contexts. This progression will help you evaluate both knowledge retention and the model's ability to generalize from its training.
 
-## Step 2: Model Deployment with RHEL AI
+## Step 2: Model Deployment with RHEL AI [Verification in Progress for thi step and below]
 
 With our enhanced model ready, we'll deploy it using RHEL AI for initial testing and validation. RHEL AI provides a bootable image with everything needed to run and serve our model.
 
