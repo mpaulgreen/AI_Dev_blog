@@ -1,0 +1,5 @@
+venv/
+*.lock
+.DS_Store
+instructlab-granite-7b-lab
+instructlab-granite-7b-lab-trained
