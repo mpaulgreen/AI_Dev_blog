@@ -222,78 +222,256 @@ This starts an interactive session where you can evaluate how well your model ha
 
 Start with questions directly from your seed examples, then gradually introduce questions requiring synthesis across multiple contexts. This progression will help you evaluate both knowledge retention and the model's ability to generalize from its training.
 
-## Step 2: Model Deployment with RHEL AI [Verification in Progress for this step and below]
+## Step 2: Model Deployment with RHEL AI
 
 With our enhanced model ready, we'll deploy it using RHEL AI for initial testing and validation. RHEL AI provides a bootable image with everything needed to run and serve our model.
 
-### Setting Up RHEL AI on Mac with M3 Chip
+### Setting Up RHEL AI on AWS
 
-For Mac users with Apple Silicon chips, here's a detailed guide to getting RHEL AI running:
+For scalable deployment and testing, we'll use RHEL AI on Amazon Web Services (AWS):
 
-1. **Download RHEL AI**:
-   - Go to the [Red Hat Developer portal](https://developers.redhat.com/products/rhel-ai/overview) and download the RHEL AI bootable image for ARM architecture
-   - You'll need a Red Hat account (free for developers)
+#### Prerequisites
 
-2. **Choose a Virtualization Solution**:
-   Several options work well with Apple Silicon:
-   - VMware Fusion (paid solution with good performance)
-   - Parallels Desktop (paid solution with excellent Apple Silicon integration)
-   - UTM (free and open-source solution based on QEMU)
+Before starting the RHEL AI installation on AWS, ensure you have:
 
-3. **Create a Virtual Machine**:
-   ```
-   # Using VMware Fusion as an example
-   1. Open VMware Fusion
-   2. Click "Create a New Virtual Machine"
-   3. Choose "Install from disc or image"
-   4. Select the RHEL AI ISO file
-   5. Select "Linux" -> "Red Hat Enterprise Linux 9 (ARM)"
-   6. Configure resources (recommended: 8+ CPU cores, 16+ GB RAM, 128+ GB storage)
-   7. Complete VM creation
-   ```
+- **Active AWS account with proper permissions**
+- **Red Hat subscription** to access RHEL AI downloads
+- **AWS CLI installed and configured** with your access key ID and secret access key
+- **Sufficient AWS resources**: VPC, subnet, security group, and SSH key pair
+- **Storage requirements**: Minimum 1TB for `/home` directory and 120GB for `/` path
 
-4. **Install RHEL AI**:
-   - Follow the RHEL installation prompts
-   - During installation, choose the AI/ML package collection
-   - Complete the setup with appropriate networking configuration
+#### Step 1: Install and Configure AWS CLI
+
+If not already installed:
+
+```bash
+# Download and install AWS CLI v2
+curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+unzip awscliv2.zip
+sudo ./aws/install
+
+# Configure AWS CLI
+aws configure
+```
+
+#### Step 2: Set Up Environment Variables
+
+Create the necessary environment variables:
+
+```bash
+export BUCKET=<custom_bucket_name>
+export RAW_AMI=rhel-ai-nvidia-aws-1.5-1747399384-x86_64.raw
+export AMI_NAME="rhel-ai"
+export DEFAULT_VOLUME_SIZE=1000  # Size in GB
+```
+
+#### Step 3: Create S3 Bucket and IAM Setup
+
+Create an S3 bucket for image conversion:
+
+```bash
+aws s3 mb s3://$BUCKET
+```
+
+Create a trust policy file for VM import:
+
+```bash
+printf '{ 
+  "Version": "2012-10-17", 
+  "Statement": [ 
+    { 
+      "Effect": "Allow", 
+      "Principal": { 
+        "Service": "vmie.amazonaws.com" 
+      }, 
+      "Action": "sts:AssumeRole", 
+      "Condition": { 
+        "StringEquals":{ 
+          "sts:Externalid": "vmimport" 
+        } 
+      } 
+    } 
+  ] 
+}' > trust-policy.json
+
+# Create the IAM role
+aws iam create-role --role-name vmimport --assume-role-policy-document file://trust-policy.json
+```
+
+Create role policy for S3 bucket access:
+
+```bash
+printf '{
+   "Version":"2012-10-17",
+   "Statement":[
+      {
+         "Effect":"Allow",
+         "Action":[
+            "s3:GetBucketLocation",
+            "s3:GetObject",
+            "s3:ListBucket" 
+         ],
+         "Resource":[
+            "arn:aws:s3:::%s",
+            "arn:aws:s3:::%s/*"
+         ]
+      },
+      {
+         "Effect":"Allow",
+         "Action":[
+            "ec2:ModifySnapshotAttribute",
+            "ec2:CopySnapshot",
+            "ec2:RegisterImage",
+            "ec2:Describe*"
+         ],
+         "Resource":"*"
+      }
+   ]
+}' $BUCKET $BUCKET > role-policy.json
+
+aws iam put-role-policy --role-name vmimport --policy-name vmimport-$BUCKET --policy-document file://role-policy.json
+```
+
+#### Step 4: Download and Convert RHEL AI Image
+
+1. Go to the [Red Hat Enterprise Linux AI download page](https://access.redhat.com)
+2. Download the RAW image file (rhel-ai-nvidia-aws-1.5-1747399384-x86_64.raw)
+3. Upload it to your S3 bucket:
+
+```bash
+aws s3 cp rhel-ai-nvidia-aws-1.5-1747399384-x86_64.raw s3://$BUCKET/
+```
+
+Create the import configuration and convert the image:
+
+```bash
+# Create import configuration
+printf '{ 
+  "Description": "RHEL AI Image", 
+  "Format": "raw", 
+  "UserBucket": { 
+    "S3Bucket": "%s", 
+    "S3Key": "%s" 
+  } 
+}' $BUCKET $RAW_AMI > containers.json
+
+# Start the import process
+task_id=$(aws ec2 import-snapshot --disk-container file://containers.json | jq -r .ImportTaskId)
+
+# Monitor import progress
+aws ec2 describe-import-snapshot-tasks --filters Name=task-state,Values=active
+```
+
+Wait for the import to complete, then register the AMI:
+
+```bash
+# Get snapshot ID from completed import
+snapshot_id=$(aws ec2 describe-import-snapshot-tasks --import-task-ids $task_id | jq -r '.ImportSnapshotTasks[0].SnapshotTaskDetail.SnapshotId')
+
+# Tag the snapshot
+aws ec2 create-tags --resources $snapshot_id --tags Key=Name,Value="$AMI_NAME"
+
+# Register AMI from snapshot
+ami_id=$(aws ec2 register-image \
+  --name "$AMI_NAME" \
+  --description "$AMI_NAME" \
+  --architecture x86_64 \
+  --root-device-name /dev/sda1 \
+  --block-device-mappings "DeviceName=/dev/sda1,Ebs={VolumeSize=${DEFAULT_VOLUME_SIZE},SnapshotId=${snapshot_id}}" \
+  --virtualization-type hvm \
+  --ena-support \
+  | jq -r .ImageId)
+
+# Tag the AMI
+aws ec2 create-tags --resources $ami_id --tags Key=Name,Value="$AMI_NAME"
+```
+
+#### Step 5: Launch RHEL AI Instance
+
+Set up instance configuration variables:
+
+```bash
+instance_name=rhel-ai-instance
+ami=$ami_id  # From previous step
+instance_type=g4dn.xlarge  # GPU-enabled instance for AI workloads
+key_name=<your-key-pair-name>
+security_group=<your-sg-id>
+subnet=<your-subnet-id>
+disk_size=1000  # GB
+```
+
+Launch the instance:
+
+```bash
+aws ec2 run-instances \
+  --image-id $ami \
+  --instance-type $instance_type \
+  --key-name $key_name \
+  --security-group-ids $security_group \
+  --subnet-id $subnet \
+  --block-device-mappings DeviceName=/dev/sda1,Ebs='{VolumeSize='$disk_size'}' \
+  --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value='$instance_name'}]'
+```
+
+#### Step 6: Connect and Verify Installation
+
+Connect to your instance:
+
+```bash
+ssh -i your-key.pem cloud-user@<instance-public-ip>
+```
+
+Verify RHEL AI installation:
+
+```bash
+# Verify InstructLab tools
+ilab --help
+
+# Initialize InstructLab (first time)
+ilab config init
+```
 
 ### Transferring Your Enhanced Model
 
-After training a model with InstructLab, you need to transfer it to your RHEL AI environment:
+After training a model with InstructLab on your local development machine, you need to transfer it to your RHEL AI AWS instance:
 
 1. **Export Your Model**:
    ```bash
-   # On your development machine where you trained the model
-   # Identify the model path
-   ls ~/.local/share/instructlab/checkpoints
+   # On your local development machine where you trained the model
+   # Identify the model path (look for the converted GGUF model)
+   ls ./instructlab-granite-7b-lab-trained/
    
    # Archive the model for transfer
-   tar -czvf telecom-model.tar.gz ~/.local/share/instructlab/checkpoints/YOUR_MODEL_FOLDER
+   tar -czvf telecom-model.tar.gz ./instructlab-granite-7b-lab-trained/
    ```
 
-2. **Transfer to RHEL AI VM**:
+2. **Transfer to RHEL AI AWS Instance**:
    ```bash
-   # Using scp (secure copy)
-   scp telecom-model.tar.gz username@rhel-vm-ip:/home/username/
-   
-   # Or via shared folder if configured in your virtualization software
+   # Using scp to transfer to AWS instance
+   scp -i your-key.pem telecom-model.tar.gz cloud-user@<instance-public-ip>:/home/cloud-user/
    ```
 
 3. **Extract on RHEL AI**:
    ```bash
-   # SSH into your RHEL AI VM
-   ssh username@rhel-vm-ip
+   # SSH into your RHEL AI AWS instance
+   ssh -i your-key.pem cloud-user@<instance-public-ip>
    
    # Extract the model
    mkdir -p ~/models
    tar -xzvf telecom-model.tar.gz -C ~/models
    ```
 
-### Deploying the Model with vLLM
+### Deploying the Model with RHEL AI Built-in Capabilities
 
-RHEL AI includes vLLM (a high-performance inference engine) for efficient model serving:
+RHEL AI comes with InstructLab pre-installed and includes vLLM for high-performance model serving:
 
-1. **Set Up the Model Server**:
+1. **Test Your Model on RHEL AI**:
+   ```bash
+   # Test the model directly with InstructLab
+   ilab model chat --model ~/models/instructlab-granite-7b-lab-trained/instructlab-granite-7b-lab-Q4_K_M.gguf
+   ```
+
+2. **Set Up a Model Server with vLLM**:
    ```bash
    # Create a deployment directory
    mkdir -p ~/telecom-assistant
@@ -301,8 +479,7 @@ RHEL AI includes vLLM (a high-performance inference engine) for efficient model 
    
    # Start the vLLM server with your model
    vllm serve \
-     --model ~/models/YOUR_MODEL_PATH \
-     --tensor-parallel-size 1 \  # Adjust based on available GPUs
+     ~/models/instructlab-granite-7b-lab-trained/instructlab-granite-7b-lab-Q4_K_M.gguf \
      --host 0.0.0.0 \
      --port 8000
    ```
@@ -356,17 +533,22 @@ RHEL AI includes vLLM (a high-performance inference engine) for efficient model 
      -d '{"query": "Tell me about fiber optic internet"}'
    ```
 
-### Performance Considerations for M3 Macs
+### Performance Considerations for AWS RHEL AI
 
-When running AI models on Apple Silicon:
+When running AI models on AWS RHEL AI:
 
-1. **Hardware Acceleration**: RHEL AI can leverage the Neural Engine and GPU in Apple Silicon, though performance characteristics differ from NVIDIA GPUs.
+1. **Instance Types**: Choose GPU-enabled instances (g4dn, p3, p4d) for optimal AI workload performance. The g4dn.xlarge instance type provides a good balance of cost and performance for testing.
 
-2. **Memory Management**: M3 Macs with unified memory architecture efficiently handle models, but monitoring memory usage is important.
+2. **Storage**: RHEL AI requires minimum 1TB for `/home` directory (InstructLab data) and 120GB for `/` path (system updates). The AWS setup automatically configures appropriate storage.
 
-3. **Quantization**: Consider using quantized versions of your models for better performance. RHEL AI supports various quantization techniques to reduce model size and improve inference speed.
+3. **Security**: Configure security groups to allow necessary ports:
+   - Port 22 for SSH access
+   - Port 8000 for the vLLM model server
+   - Port 5000 for the API wrapper (if used)
 
-This setup provides a development environment for testing your model's responses and making iterative improvements before scaling with OpenShift AI.
+4. **Cost Management**: Monitor AWS costs as GPU instances can be expensive. Consider using spot instances for development and testing to reduce costs.
+
+This setup provides a production-ready environment for testing your model's responses and making iterative improvements before scaling with OpenShift AI.
 
 ## Step 3: Scaling with OpenShift AI
 
@@ -606,10 +788,19 @@ For better performance during model training:
 
 ### macOS Model Compatibility
 
-If you encounter errors about vLLM not supporting your platform, remember to convert your model to GGUF format:
+If you encounter errors about vLLM not supporting your platform during local development, remember to convert your model to GGUF format:
 ```bash
 ilab model convert --model-dir ~/.local/share/instructlab/checkpoints/YOUR_MODEL
 ```
+
+### AWS RHEL AI Deployment Issues
+
+Common issues when deploying on AWS:
+1. **Import task fails**: Check IAM permissions and S3 bucket access
+2. **AMI registration fails**: Verify snapshot completed successfully  
+3. **Instance launch fails**: Check VPC, subnet, and security group configurations
+4. **Connection issues**: Verify security group allows SSH (port 22) from your IP
+5. **Model serving issues**: Ensure GPU drivers are properly configured and model paths are correct
 
 ## Conclusion
 
