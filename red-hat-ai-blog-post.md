@@ -1092,7 +1092,17 @@ For production deployments, consider:
 
 3. **GPU Support**: Ensure your container has GPU support compiled in llama.cpp for optimal performance.
 
-This setup provides a production-ready deployment of your custom telecom AI assistant on OpenShift AI, with proper monitoring, scaling, and Red Hat security standards.
+4. **Model Format Trade-offs**: 
+   - **GGUF format** is excellent for inference-only deployments, edge computing, and scenarios where resource efficiency is critical. However, it requires custom containers and doesn't integrate with standard Kubernetes model serving APIs like KServe InferenceService.
+   - **HuggingFace format** offers better operational integration with enterprise MLOps platforms, native support for KServe InferenceService APIs (enabling features like automatic scaling, canary deployments, and A/B testing), and compatibility with a wider ecosystem of tools. Consider keeping your model in HuggingFace format if you need these enterprise features and have sufficient GPU resources.
+
+This setup provides a foundational deployment of your custom telecom AI assistant on OpenShift AI with basic monitoring and scaling capabilities. For production use, you should additionally implement:
+- Authentication and authorization for API endpoints
+- Network policies and security constraints
+- Comprehensive logging and distributed tracing
+- Model versioning and rollback strategies
+- Rate limiting and circuit breakers
+- Backup and disaster recovery procedures
 
 Red Hat's InstructLab and RHEL AI provide a powerful foundation for developing and deploying custom AI applications. Through this guide, we've demonstrated how to:
 
