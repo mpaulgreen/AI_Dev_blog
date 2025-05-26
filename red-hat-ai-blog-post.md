@@ -1,4 +1,4 @@
-# Enhancing AI Developer Experience with Red Hat: A Practical Guide to InstructLab, RHEL AI, and OpenShift AI
+# Enhancing AI Developer Experience with Red Hat: A Practical Guide to InstructLab and RHEL AI
 
 In today's rapidly evolving technological landscape, artificial intelligence has become a cornerstone of innovation for enterprises across industries. However, developing, deploying, and managing AI applications at scale presents significant challenges that many organizations struggle to overcome. Red Hat's comprehensive AI portfolio—including InstructLab, Red Hat Enterprise Linux (RHEL) AI, and OpenShift AI—offers a powerful solution to these challenges, enabling a seamless developer experience while maintaining enterprise-grade reliability and security.
 
@@ -22,7 +22,7 @@ Red Hat offers a complete ecosystem for AI development:
 - **RHEL AI**: A foundation model platform combining Granite models with InstructLab in a bootable RHEL image
 - **OpenShift AI**: A comprehensive platform for managing the complete AI/ML lifecycle at scale
 
-Let's explore how these components work together through a practical use case.
+Let's explore how InstructLab and RHEL AI work together through a practical use case.
 
 ## Use Case: Building a Customer Support AI Assistant with Domain-Specific Knowledge
 
@@ -30,18 +30,14 @@ For our example, let's consider a telecommunications company that wants to creat
 
 1. Handle common customer inquiries about telecom products
 2. Answer questions specific to the company's services, policies, and technical specifications
-3. Integrate with existing customer management systems
-4. Scale to support thousands of concurrent users
-5. Run across hybrid environments including on-premises data centers and cloud
 
 ### Solution Architecture
 
-Our solution will leverage Red Hat's AI portfolio to create a comprehensive, end-to-end workflow:
+Our solution will leverage Red Hat's AI portfolio to create a comprehensive workflow:
 
 1. Use InstructLab to customize a foundation model with telecom-specific knowledge
 2. Deploy the model using RHEL AI for experimentation and initial testing
 3. Scale and productionize the application with OpenShift AI
-4. Implement a RAG (Retrieval Augmented Generation) approach to access up-to-date product information
 
 Let's break down the implementation details.
 
@@ -463,75 +459,46 @@ After training a model with InstructLab on your local development machine, you n
 
 ### Deploying the Model with RHEL AI Built-in Capabilities
 
-RHEL AI comes with InstructLab pre-installed and includes vLLM for high-performance model serving:
+RHEL AI comes with InstructLab pre-installed and includes support for serving models:
 
-1. **Test Your Model on RHEL AI**:
+1. **Configure InstructLab for GGUF Models**:
    ```bash
-   # Test the model directly with InstructLab
-   ilab model chat --model ~/models/instructlab-granite-7b-lab-trained/instructlab-granite-7b-lab-Q4_K_M.gguf
-   ```
-
-2. **Set Up a Model Server with vLLM**:
-   ```bash
-   # Create a deployment directory
-   mkdir -p ~/telecom-assistant
-   cd ~/telecom-assistant
+   # Check current InstructLab configuration
+   ilab config show
    
-   # Start the vLLM server with your model
-   vllm serve \
-     ~/models/instructlab-granite-7b-lab-trained/instructlab-granite-7b-lab-Q4_K_M.gguf \
-     --host 0.0.0.0 \
-     --port 8000
+   # Edit the configuration file to use llama-cpp backend
+   vi ~/.config/instructlab/config.yaml
    ```
 
-2. **Create an API Interface**:
-   Create a simple API wrapper using Flask to make interacting with the model easier:
-
-   ```python
-   from flask import Flask, request, jsonify
-   import requests
-
-   app = Flask(__name__)
-
-   MODEL_ENDPOINT = "http://localhost:8000/v1/completions"
-
-   @app.route('/api/support', methods=['POST'])
-   def get_support_response():
-       query = request.json.get('query', '')
-       
-       payload = {
-           "prompt": f"Customer: {query}\nSupport Assistant:",
-           "max_tokens": 500,
-           "temperature": 0.7
-       }
-       
-       response = requests.post(MODEL_ENDPOINT, json=payload)
-       model_response = response.json()
-       
-       return jsonify({
-           "response": model_response['choices'][0]['text'].strip()
-       })
-
-   if __name__ == '__main__':
-       app.run(host='0.0.0.0', port=5000)
+   Update the serve section to use llama-cpp backend:
+   ```yaml
+   serve:
+     backend: llama-cpp  # Change from vllm to llama-cpp
    ```
 
-3. **Run the API Wrapper**:
-   ```bash
-   # Install Flask if needed
-   pip install flask requests
+2. **Serve and Test the Model**:
    
-   # Run the API
-   python api.py
-   ```
-
-4. **Test Your Deployment**:
+   In the first terminal, start the model server:
    ```bash
-   # From another terminal
-   curl -X POST http://localhost:5000/api/support \
-     -H "Content-Type: application/json" \
-     -d '{"query": "Tell me about fiber optic internet"}'
+   # Start the model server
+   ilab model serve --model-path ~/models/instructlab-granite-7b-lab-trained/instructlab-granite-7b-lab-Q4_K_M.gguf
    ```
+   
+   The server will start and display messages indicating it's ready to accept connections. Keep this terminal open and running.
+   
+   In a second terminal, connect to the served model:
+   ```bash
+   # Open a new terminal and SSH into your RHEL AI instance again
+   ssh -i your-key.pem cloud-user@<instance-public-ip>
+   
+   # Connect to the served model for interactive chat
+   ilab model chat
+   ```
+   
+   You can now interact with your fine-tuned telecom support assistant. Try asking questions like:
+   - "What is fiber optic internet?"
+   - "How does 5G compare to 4G?"
+   - "What are the benefits of VoIP?"
 
 ### Performance Considerations for AWS RHEL AI
 
@@ -543,211 +510,15 @@ When running AI models on AWS RHEL AI:
 
 3. **Security**: Configure security groups to allow necessary ports:
    - Port 22 for SSH access
-   - Port 8000 for the vLLM model server
-   - Port 5000 for the API wrapper (if used)
+   - Port 8000 for the model server (if exposing externally)
 
 4. **Cost Management**: Monitor AWS costs as GPU instances can be expensive. Consider using spot instances for development and testing to reduce costs.
 
-This setup provides a production-ready environment for testing your model's responses and making iterative improvements before scaling with OpenShift AI.
-
-## Step 3: Scaling with OpenShift AI
-
-Once we've validated our model's performance, we'll leverage OpenShift AI to productionize and scale our solution:
-
-1. Deploy OpenShift cluster with GPU support
-2. Install OpenShift AI operator
-3. Create a model server deployment:
-
-```yaml
-apiVersion: serving.kserve.io/v1beta1
-kind: InferenceService
-metadata:
-  name: telecom-support-assistant
-  namespace: ai-models
-spec:
-  predictor:
-    model:
-      modelFormat:
-        name: pytorch
-      runtime: triton
-      storageUri: pvc://model-storage/telecom-assistant
-      resources:
-        limits:
-          nvidia.com/gpu: 1
-        requests:
-          memory: "4Gi"
-          cpu: "1"
-```
-
-4. Deploy our front-end application that will interact with the model:
-
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: support-assistant-app
-  namespace: ai-apps
-spec:
-  replicas: 3
-  selector:
-    matchLabels:
-      app: support-assistant
-  template:
-    metadata:
-      labels:
-        app: support-assistant
-    spec:
-      containers:
-      - name: support-assistant
-        image: registry.example.com/support-assistant:latest
-        ports:
-        - containerPort: 8080
-        env:
-        - name: MODEL_ENDPOINT
-          value: "http://telecom-support-assistant.ai-models.svc.cluster.local"
-```
-
-## Step 4: Implementing RAG for Up-to-Date Information
-
-To ensure our assistant has access to the latest product information, we'll implement a Retrieval Augmented Generation (RAG) system using OpenShift AI's capabilities:
-
-1. Deploy a vector database (e.g., Redis) to store embeddings of our knowledge base documents:
-
-```yaml
-apiVersion: apps/v1
-kind: StatefulSet
-metadata:
-  name: redis-vector-db
-  namespace: ai-infra
-spec:
-  serviceName: "redis"
-  replicas: 1
-  selector:
-    matchLabels:
-      app: redis-vector
-  template:
-    metadata:
-      labels:
-        app: redis-vector
-    spec:
-      containers:
-      - name: redis
-        image: redislabs/redisearch:latest
-        ports:
-        - containerPort: 6379
-        volumeMounts:
-        - name: redis-data
-          mountPath: /data
-  volumeClaimTemplates:
-  - metadata:
-      name: redis-data
-    spec:
-      accessModes: [ "ReadWriteOnce" ]
-      resources:
-        requests:
-          storage: 20Gi
-```
-
-2. Create a data pipeline to process and embed documents into the vector database:
-
-```python
-from langchain.embeddings import HuggingFaceEmbeddings
-from langchain.vectorstores import Redis
-from langchain.document_loaders import DirectoryLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-
-# Load documents
-loader = DirectoryLoader('./knowledge_base', glob="**/*.md")
-documents = loader.load()
-
-# Split text into chunks
-text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
-texts = text_splitter.split_documents(documents)
-
-# Initialize embeddings
-embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-
-# Create and store embeddings in Redis
-redis_url = "redis://redis-vector-db.ai-infra:6379"
-vectorstore = Redis.from_documents(
-    texts, 
-    embeddings, 
-    redis_url=redis_url,
-    index_name="telecom_knowledge"
-)
-```
-
-3. Enhance our API to use RAG for responding to queries:
-
-```python
-from flask import Flask, request, jsonify
-import requests
-from langchain.embeddings import HuggingFaceEmbeddings
-from langchain.vectorstores import Redis
-
-app = Flask(__name__)
-
-MODEL_ENDPOINT = "http://telecom-support-assistant.ai-models.svc.cluster.local/v1/completions"
-REDIS_URL = "redis://redis-vector-db.ai-infra:6379"
-
-embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-vectorstore = Redis(redis_url=REDIS_URL, index_name="telecom_knowledge", embedding=embeddings)
-
-@app.route('/api/support', methods=['POST'])
-def get_support_response():
-    query = request.json.get('query', '')
-    
-    # Retrieve relevant context from vector database
-    relevant_docs = vectorstore.similarity_search(query, k=3)
-    context = "\n".join([doc.page_content for doc in relevant_docs])
-    
-    # Create prompt with context
-    prompt = f"""
-    Context information:
-    {context}
-    
-    Customer: {query}
-    Support Assistant:
-    """
-    
-    # Query the model
-    payload = {
-        "prompt": prompt,
-        "max_tokens": 500,
-        "temperature": 0.7
-    }
-    
-    response = requests.post(MODEL_ENDPOINT, json=payload)
-    model_response = response.json()
-    
-    return jsonify({
-        "response": model_response['choices'][0]['text'].strip()
-    })
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8080)
-```
-
-## Benefits of the Red Hat Approach
-
-Our implementation leverages the strengths of each component in Red Hat's AI portfolio:
-
-1. **InstructLab** enables domain experts to enhance the model's knowledge without deep ML expertise
-2. **RHEL AI** provides a streamlined development environment for initial model testing
-3. **OpenShift AI** delivers enterprise-grade scalability, security, and management capabilities
-4. The overall architecture supports a hybrid deployment model that can run anywhere
-
-Key advantages include:
-
-- **Reduced time-to-market**: The streamlined workflow significantly accelerates development cycles
-- **Domain customization**: The ability to enhance models with proprietary knowledge creates a competitive advantage
-- **Operational consistency**: The same platform can be used from development to production
-- **Enterprise readiness**: Security, monitoring, and governance capabilities are built in
-- **Cost efficiency**: Open source foundation reduces licensing costs and vendor lock-in
+This setup provides a production-ready environment for testing your model's responses and making iterative improvements.
 
 ## Common Issues and Troubleshooting
 
-When working with InstructLab, you might encounter some common issues:
+When working with InstructLab and RHEL AI, you might encounter some common issues:
 
 ### Taxonomy Validation Errors
 
@@ -784,7 +555,7 @@ sudo dnf install yq
 For better performance during model training:
 - Use GPU acceleration when available
 - Start with smaller datasets for initial testing
-- Consider using OpenShift AI for distributed training at scale
+- Consider using OpenShift AI for distributed training at scale (in future deployments)
 
 ### macOS Model Compatibility
 
@@ -802,21 +573,548 @@ Common issues when deploying on AWS:
 4. **Connection issues**: Verify security group allows SSH (port 22) from your IP
 5. **Model serving issues**: Ensure GPU drivers are properly configured and model paths are correct
 
-## Conclusion
+### RHEL AI Model Serving Issues
 
-Red Hat's AI portfolio represents a comprehensive approach to addressing the challenges of developing and deploying AI applications at scale. Through the combined capabilities of InstructLab, RHEL AI, and OpenShift AI, organizations can streamline the entire AI lifecycle—from model customization to production deployment and ongoing management.
+If you encounter issues with model serving on RHEL AI:
 
-The telecommunications customer support example demonstrates how these tools can be integrated to create a practical, scalable solution that delivers real business value. By leveraging Red Hat's open source approach, organizations can accelerate their AI initiatives while maintaining the security, reliability, and flexibility required for enterprise deployments.
+1. **vLLM compatibility errors**: GGUF files are not compatible with vLLM. Always configure InstructLab to use `llama-cpp` backend for GGUF models by editing `~/.config/instructlab/config.yaml`.
 
-As AI continues to transform industries, having a robust, scalable, and flexible foundation for development and deployment will be crucial for success. Red Hat's AI portfolio provides exactly that foundation, enabling organizations to innovate faster and more effectively in an increasingly AI-driven world.
+2. **Model server fails to start**: Check the server logs for specific error messages. Common issues include:
+   - Insufficient GPU memory
+   - Port already in use
+   - Model file path incorrect
+
+## Step 3: Scaling with OpenShift AI
+
+Once we've validated our model's performance on RHEL AI, we'll leverage OpenShift AI to productionize and scale our solution. OpenShift AI provides comprehensive tools for the entire ML lifecycle, from experimentation to production deployment at scale.
+
+### Prerequisites for OpenShift AI
+
+Before starting with OpenShift AI, ensure you have:
+
+1. **OpenShift Container Platform (OCP) 4.12 or later** with:
+   - Minimum 3 control plane nodes
+   - Minimum 3 worker nodes (preferably with GPU support for AI workloads)
+   - GPU nodes with NVIDIA GPU operator installed (for optimal performance)
+
+2. **Red Hat Subscriptions**:
+   - Valid OpenShift subscription
+   - OpenShift AI subscription
+
+3. **Required CLI Tools**:
+   - `oc` (OpenShift CLI)
+   - `kubectl`
+   - `podman` or `docker` for container building
+
+4. **Storage Requirements**:
+   - Persistent storage provisioner (e.g., OpenShift Data Foundation, AWS EBS)
+   - Minimum 100GB available storage for models
+
+### Creating a Data Science Project
+
+Create a new project for our AI workloads:
+
+```bash
+# Create the project
+oc new-project telecom-ai-prod
+
+# Label it for OpenShift AI
+oc label namespace telecom-ai-prod opendatahub.io/dashboard=true modelmesh-enabled=true
+```
+
+### Creating and Configuring PVC for Model Storage
+
+Create a PersistentVolumeClaim to store your model:
+
+```bash
+cat << EOF | oc apply -f -
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: telecom-model-pvc
+  namespace: telecom-ai-prod
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+EOF
+```
+
+Verify the PVC is bound:
+
+```bash
+oc get pvc -n telecom-ai-prod
+```
+
+### Transferring Model Files to PVC
+
+To transfer your trained model to the PVC, we'll use a temporary pod:
+
+1. **Create a temporary pod with the PVC mounted**:
+
+```bash
+cat << EOF | oc apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: model-upload-pod
+  namespace: telecom-ai-prod
+spec:
+  containers:
+  - name: upload-container
+    image: registry.access.redhat.com/ubi9/ubi:latest
+    command: ["/bin/bash", "-c", "sleep 3600"]
+    volumeMounts:
+    - name: model-storage
+      mountPath: /models
+  volumes:
+  - name: model-storage
+    persistentVolumeClaim:
+      claimName: telecom-model-pvc
+EOF
+```
+
+2. **Wait for the pod to be ready**:
+
+```bash
+oc wait --for=condition=Ready pod/model-upload-pod -n telecom-ai-prod --timeout=60s
+```
+
+3. **Copy your model files to the PVC**:
+
+```bash
+# Copy to OpenShift pod from your local machine
+oc cp telecom-model.tar.gz telecom-ai-prod/model-upload-pod:/models/
+
+# Extract in the pod
+oc exec -n telecom-ai-prod model-upload-pod -- tar -xzf /models/telecom-model.tar.gz -C /models/
+```
+
+4. **Clean up the temporary pod**:
+
+```bash
+oc delete pod model-upload-pod -n telecom-ai-prod
+```
+
+### Creating a Custom Model Server Container
+
+Since GGUF format requires special handling, we'll create a custom container that can serve GGUF models:
+
+1. **Create a Dockerfile following Red Hat standards**:
+
+```dockerfile
+# Use Red Hat Universal Base Image
+FROM registry.access.redhat.com/ubi9/python-311:latest
+
+# Switch to root for installation
+USER 0
+
+# Install system dependencies
+RUN dnf install -y \
+    gcc \
+    gcc-c++ \
+    make \
+    git \
+    && dnf clean all
+
+# Install Python dependencies
+RUN pip install --no-cache-dir \
+    llama-cpp-python==0.2.57 \
+    flask==3.0.2 \
+    gunicorn==21.2.0 \
+    prometheus-client==0.19.0
+
+# Create app directory
+WORKDIR /app
+
+# Copy the server script
+COPY model_server.py /app/
+
+# Set permissions (user 1001 already exists in UBI images)
+RUN chown -R 1001:0 /app && \
+    chmod -R g=u /app
+
+# Switch to non-root user
+USER 1001
+
+# Expose ports
+EXPOSE 8080 9090
+
+# Set environment variables
+ENV MODEL_PATH="/models/instructlab-granite-7b-lab-Q4_K_M.gguf"
+ENV HOST="0.0.0.0"
+ENV PORT="8080"
+
+# Run the server
+CMD ["python", "model_server.py"]
+```
+
+2. **Create the model server Python script**:
+
+```python
+# model_server.py
+import os
+import json
+import logging
+from flask import Flask, request, jsonify
+from llama_cpp import Llama
+from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
+import time
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Prometheus metrics
+REQUEST_COUNT = Counter('model_requests_total', 'Total number of requests')
+REQUEST_LATENCY = Histogram('model_request_duration_seconds', 'Request latency')
+ERROR_COUNT = Counter('model_errors_total', 'Total number of errors')
+
+app = Flask(__name__)
+
+# Load model
+MODEL_PATH = os.environ.get('MODEL_PATH', '/models/model.gguf')
+logger.info(f"Loading model from {MODEL_PATH}")
+
+try:
+    llm = Llama(
+        model_path=MODEL_PATH,
+        n_ctx=4096,
+        n_threads=4,
+        n_gpu_layers=-1  # Use all available GPU layers
+    )
+    logger.info("Model loaded successfully")
+except Exception as e:
+    logger.error(f"Failed to load model: {e}")
+    raise
+
+@app.route('/health', methods=['GET'])
+def health():
+    """Health check endpoint"""
+    return jsonify({"status": "healthy", "model": MODEL_PATH})
+
+@app.route('/ready', methods=['GET'])
+def ready():
+    """Readiness check endpoint"""
+    return jsonify({"status": "ready"})
+
+@app.route('/v1/completions', methods=['POST'])
+def completions():
+    """OpenAI-compatible completions endpoint"""
+    REQUEST_COUNT.inc()
+    start_time = time.time()
+    
+    try:
+        data = request.json
+        prompt = data.get('prompt', '')
+        max_tokens = data.get('max_tokens', 500)
+        temperature = data.get('temperature', 0.7)
+        
+        # Generate completion
+        response = llm(
+            prompt,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            echo=False
+        )
+        
+        # Format response
+        result = {
+            "id": f"cmpl-{int(time.time())}",
+            "object": "text_completion",
+            "created": int(time.time()),
+            "model": "telecom-assistant",
+            "choices": [{
+                "text": response['choices'][0]['text'],
+                "index": 0,
+                "finish_reason": "stop"
+            }]
+        }
+        
+        REQUEST_LATENCY.observe(time.time() - start_time)
+        return jsonify(result)
+        
+    except Exception as e:
+        ERROR_COUNT.inc()
+        logger.error(f"Error generating completion: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/metrics', methods=['GET'])
+def metrics():
+    """Prometheus metrics endpoint"""
+    return generate_latest(), 200, {'Content-Type': CONTENT_TYPE_LATEST}
+
+if __name__ == '__main__':
+    host = os.environ.get('HOST', '0.0.0.0')
+    port = int(os.environ.get('PORT', 8080))
+    app.run(host=host, port=port)
+```
+
+3. **Build the container image**:
+
+```bash
+# Create a build directory
+mkdir telecom-model-server
+cd telecom-model-server
+
+# Copy the Dockerfile and model_server.py to this directory
+# Then build using podman for linux/amd64 architecture
+podman build --platform linux/amd64 -t telecom-model-server-amd64:latest .
+
+# Tag for your registry
+podman tag telecom-model-server-amd64:latest quay.io/<your-org>/telecom-model-server-amd64:latest
+
+# Push to registry
+podman push quay.io/<your-org>/telecom-model-server-amd64:latest
+```
+
+### Deploying with Custom Deployment
+
+Since GGUF models require special handling with llama.cpp, we'll create a custom deployment:
+
+1. **Create a Deployment for the model server**:
+
+```yaml
+cat << EOF | oc apply -f -
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: telecom-model-server
+  namespace: telecom-ai-prod
+  labels:
+    app: telecom-model-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: telecom-model-server
+  template:
+    metadata:
+      labels:
+        app: telecom-model-server
+    spec:
+      # Add tolerations to allow scheduling on GPU nodes
+      tolerations:
+      - key: "p4-gpu"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
+      containers:
+      - name: model-server
+        image: quay.io/<your-org>/telecom-model-server-amd64:latest
+        ports:
+        - containerPort: 8080
+          name: http
+        - containerPort: 9090
+          name: metrics
+        env:
+        - name: MODEL_PATH
+          value: "/models/instructlab-granite-7b-lab-trained/instructlab-granite-7b-lab-Q4_K_M.gguf"
+        volumeMounts:
+        - name: model-storage
+          mountPath: /models
+          readOnly: true
+        resources:
+          requests:
+            memory: "16Gi"
+            cpu: "4"
+            nvidia.com/gpu: "1"
+          limits:
+            memory: "32Gi"
+            cpu: "8"
+            nvidia.com/gpu: "1"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 300
+          periodSeconds: 10
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 60
+          periodSeconds: 15
+          timeoutSeconds: 10
+          failureThreshold: 10
+      volumes:
+      - name: model-storage
+        persistentVolumeClaim:
+          claimName: telecom-model-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: telecom-model-service
+  namespace: telecom-ai-prod
+spec:
+  selector:
+    app: telecom-model-server
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+  - name: metrics
+    port: 9090
+    targetPort: 9090
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: telecom-model-route
+  namespace: telecom-ai-prod
+  annotations:
+    haproxy.router.openshift.io/timeout: "600s"  # 10 minutes timeout for model inference
+    haproxy.router.openshift.io/timeout-server: "600s"  # Server-side timeout
+spec:
+  to:
+    kind: Service
+    name: telecom-model-service
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+EOF
+```
+
+### Monitoring and Scaling
+
+Set up monitoring for your deployed model:
+
+```yaml
+cat << EOF | oc apply -f -
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: telecom-model-metrics
+  namespace: telecom-ai-prod
+spec:
+  selector:
+    matchLabels:
+      app: telecom-model-server
+  endpoints:
+  - port: metrics
+    interval: 30s
+EOF
+```
+
+Configure horizontal pod autoscaling:
+
+```yaml
+cat << EOF | oc apply -f -
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: telecom-model-hpa
+  namespace: telecom-ai-prod
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: telecom-model-server
+  minReplicas: 1
+  maxReplicas: 5
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+EOF
+```
+
+### Testing Your Deployed Model
+
+Once deployed, test your model:
+
+```bash
+# Get the route URL
+MODEL_URL=$(oc get route telecom-model-route -n telecom-ai-prod -o jsonpath='{.spec.host}')
+
+# Test the health endpoint first
+curl -k https://${MODEL_URL}/health
+
+# Start with a minimal request to verify connectivity
+curl -k -X POST https://${MODEL_URL}/v1/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "Hi",
+    "max_tokens": 10,
+    "temperature": 0.7
+  }'
+
+# Once minimal requests work, test with larger requests
+# Note: Larger token counts will take longer to process
+curl -k -X POST https://${MODEL_URL}/v1/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "What is fiber optic internet?",
+    "max_tokens": 100,
+    "temperature": 0.7
+  }'
+
+# For production use, consider implementing:
+# 1. Streaming responses for better user experience
+# 2. Request queuing for handling multiple concurrent requests
+# 3. Response caching for common queries
+```
+
+### Performance Considerations
+
+When serving GGUF models through OpenShift routes:
+
+1. **Initial model loading**: The first request after pod startup will be slower as the model loads into memory
+2. **Token generation time**: Each token takes time to generate; 200 tokens can take 30-60 seconds depending on model size and GPU
+3. **Route timeouts**: Default OpenShift route timeout is 30 seconds. For LLM inference, you need longer timeouts (we set 600s)
+4. **Concurrent requests**: Consider the pod's ability to handle multiple simultaneous requests
+
+For production deployments, consider:
+- Using streaming responses to provide feedback during generation
+- Implementing a queue system for request management
+- Setting appropriate resource limits based on your GPU capabilities
+
+### Important Considerations for GGUF Models
+
+1. **GGUF models require special handling**: Standard model serving frameworks expect PyTorch, TensorFlow, or ONNX formats. For GGUF, you need a custom container with llama.cpp.
+
+2. **Performance**: GGUF models are optimized for inference and use less memory, making them ideal for edge deployments and resource-constrained environments.
+
+3. **GPU Support**: Ensure your container has GPU support compiled in llama.cpp for optimal performance.
+
+This setup provides a production-ready deployment of your custom telecom AI assistant on OpenShift AI, with proper monitoring, scaling, and Red Hat security standards.
+
+Red Hat's InstructLab and RHEL AI provide a powerful foundation for developing and deploying custom AI applications. Through this guide, we've demonstrated how to:
+
+1. **Customize foundation models** with domain-specific knowledge using InstructLab's intuitive taxonomy system
+2. **Deploy and test models** in a production-ready RHEL AI environment on AWS
+3. **Serve models efficiently** using the appropriate backend configuration for GGUF files
+
+The telecommunications customer support example shows how these tools can be used to create practical AI solutions that incorporate proprietary knowledge. By leveraging Red Hat's open source approach, organizations can:
+
+- Reduce dependency on generic models by adding their own domain expertise
+- Accelerate AI development with user-friendly tools that don't require deep ML knowledge
+- Deploy models in a secure, enterprise-ready environment
+- Iterate quickly based on real-world testing and feedback
 
 ## Next Steps
 
-To get started with Red Hat's AI portfolio:
+To continue your AI journey with Red Hat:
 
-1. **Explore InstructLab**: Visit [instructlab.ai](https://instructlab.ai) and try out the community version
-2. **Try RHEL AI**: Download the developer preview from Red Hat's website
-3. **Deploy OpenShift AI**: Contact Red Hat for a trial of OpenShift AI
-4. **Join the community**: Contribute to the InstructLab taxonomy repository to improve the models
+1. **Expand your taxonomy**: Add more domain-specific knowledge to further enhance your model's capabilities
+2. **Experiment with different base models**: Try different foundation models to see which works best for your use case
+3. **Scale with OpenShift AI**: Once you've validated your approach, consider deploying at scale with OpenShift AI for production workloads
+4. **Implement RAG**: Add retrieval-augmented generation to keep your model's responses current with the latest information
+5. **Join the community**: Contribute to the InstructLab taxonomy repository and share your experiences with others
 
-By leveraging these powerful tools together, you can create sophisticated AI applications that meet the needs of your organization while maintaining enterprise-grade reliability and security.
+By mastering InstructLab and RHEL AI, you've taken the crucial first steps in building production-ready AI applications that can be customized for your specific needs while maintaining enterprise-grade reliability and security.

@@ -8,3 +8,5 @@ rhel-ai-nvidia-aws-1.5-1747399384-x86_64.raw
 containers.json
 role-policy.json
 trust-policy.json
+*.tar.gz
+step1_2-red-hat-ai-blog-post.md
